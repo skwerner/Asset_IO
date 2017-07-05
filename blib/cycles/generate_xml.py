@@ -23,6 +23,7 @@ import bpy
 
 import xml.etree.cElementTree as ET
 from os import path
+import sys
 
 from .version import version, compatible
 from .utils import check_asset
@@ -44,6 +45,44 @@ def indent(elem, level=0):
         if level and (not elem.tail or not elem.tail.strip()):
             elem.tail = i
 ##### End of pretty print code #####
+
+##### Following the C++ equivalent in blender_util.h
+def curvemapping_minmax(cumap, rgb_curve):
+    if (rgb_curve):
+        num_curves = 4
+    else:
+        num_curves = 3
+    min_x = sys.float_info.max
+    max_x = -sys.float_info.max
+    for i in range(num_curves):
+        map = cumap.curves[i]
+        min_x = min(min_x, map.points[0].location[0])
+        max_x = max(max_x, map.points[len(map.points) - 1].location[0])
+    return [min_x, max_x]
+
+def curvemapping_color_to_array(cumap, size, rgb_curve):
+    [min_x, max_x] = curvemapping_minmax(cumap, rgb_curve)
+    range_x = max_x - min_x
+    cumap.update()
+    mapR = cumap.curves[0]
+    mapG = cumap.curves[1]
+    mapB = cumap.curves[2]
+
+    data = []
+    if(rgb_curve):
+        mapI = cumap.curves[3]
+        for i in range(size):
+            t = min_x + float(i) /float(size-1) * range_x
+            data.append([mapR.evaluate(mapI.evaluate(t)),
+            mapG.evaluate(mapI.evaluate(t)),
+            mapB.evaluate(mapI.evaluate(t))])
+    else:
+        for i in range(size):
+            t = min_x + float(i)/float(size-1) * range_x
+            data.append([mapR.evaluate(t),
+            mapG.evaluate(t),
+            mapB.evaluate(t)])
+    return data
 
 def set_attributes(asset, xelement, optimize_file):
     attrs = [attr for attr in dir(asset) if not attr.startswith("__") and not attr.startswith("bl_") and type(getattr(asset, attr)).__module__ == "builtins"]
@@ -125,6 +164,16 @@ def set_nodes(asset, xelement, images, script_export, scr_paths, textnames, opti
                 curvedata = [[[list(point.location), point.handle_type] for point in curve.points] for curve in node.mapping.curves]
                 xcurvedata = ET.SubElement(xnode, "curve_data")
                 xcurvedata.text = str(curvedata)
+                if node.name == "RGB Curves":
+                    xcurvedata_baked = ET.SubElement(xnode, "curve_data_baked")
+                    xcurvedata_baked.text = str(curvemapping_color_to_array(node.mapping, 256, 1))
+                    xcurvedata_minmax = ET.SubElement(xnode, "curve_data_minmax")
+                    xcurvedata_minmax.text = str(curvemapping_minmax(node.mapping, 1))
+                elif node.name =="Vector Curves":
+                    xcurvedata_baked = ET.SubElement(xnode, "curve_data_baked")
+                    xcurvedata_baked.text = str(curvemapping_color_to_array(node.mapping, 256, 0))
+                    xcurvedata_minmax = ET.SubElement(xnode, "curve_data_minmax")
+                    xcurvedata_minmax.text = str(curvemapping_minmax(node.mapping, 0))
             elif hasattr(node, "color_ramp"):
                 ramp = node.color_ramp
                 rampdata = [[element.position, list(element.color)] for element in ramp.elements]
